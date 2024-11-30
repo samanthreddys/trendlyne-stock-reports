@@ -20,36 +20,49 @@ def load_data():
 
 
 def create_sector_analysis(df_filtered):
-    st.header("Sector-wise Investment Breakdown")
+    """Update the sector analysis function to be more concise"""
+    st.subheader("Sector-wise Breakdown")
 
-    # Simple Pie Chart for Sector Distribution
-    sector_totals = df_filtered.groupby('Sector Name')['Invested Amount'].sum().reset_index()
-    fig_pie = px.pie(
-        sector_totals,
+    # Create tabs within the section
+    sector_tab1, sector_tab2 = st.tabs(["Distribution", "Performance"])
+
+    with sector_tab1:
+        create_sector_distribution(df_filtered)
+
+    with sector_tab2:
+        create_sector_performance(df_filtered)
+
+
+# Add these helper functions
+def create_sector_distribution(df_filtered):
+    sector_summary = df_filtered.groupby('Sector Name').agg({
+        'Invested Amount': 'sum',
+        'Current Value': 'sum'
+    }).reset_index()
+
+    fig = px.pie(
+        sector_summary,
         values='Invested Amount',
         names='Sector Name',
-        title='How Your Money is Distributed Across Sectors',
-        hole=0.4  # Makes it a donut chart, easier to read
+        title='Investment Distribution',
+        hole=0.4
     )
-    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-    st.plotly_chart(fig_pie)
+    fig.update_traces(textposition='inside', textinfo='percent+label')
+    st.plotly_chart(fig, use_container_width=True)
 
-    # Simple Bar Chart for Sector Performance
-    st.subheader("How Each Sector is Performing")
-    sector_performance = df_filtered.groupby('Sector Name')['Unrealized P&L %'].mean().reset_index()
-    fig_performance = px.bar(
-        sector_performance,
+
+def create_sector_performance(df_filtered):
+    sector_perf = df_filtered.groupby('Sector Name')['Unrealized P&L %'].mean().reset_index()
+
+    fig = px.bar(
+        sector_perf,
         x='Sector Name',
         y='Unrealized P&L %',
-        title='Profit/Loss % by Sector',
+        title='Sector-wise Returns',
         color='Unrealized P&L %',
-        color_continuous_scale=['red', 'green']  # Red for loss, green for profit
+        color_continuous_scale=['red', 'green']
     )
-    fig_performance.update_layout(
-        xaxis_title="Sector",
-        yaxis_title="Profit/Loss %"
-    )
-    st.plotly_chart(fig_performance)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def create_valuation_analysis(df_filtered):
@@ -652,81 +665,324 @@ def create_quality_metrics_analysis(df_filtered):
         st.plotly_chart(fig_quality)
 
 
+def create_detailed_stock_analysis(df_filtered):
+    st.header("Detailed Stock Analysis")
+
+    # Store original number of stocks and values
+    total_stocks = len(df_filtered)
+    original_investment = df_filtered['Invested Amount'].sum()
+    original_current = df_filtered['Current Value'].sum()
+
+    # Create columns for search filters
+    col1, col2, col3 = st.columns([2, 2, 1])
+
+    with col1:
+        # Autocomplete search for stocks
+        stock_options = df_filtered['Stock Name'].unique().tolist()
+        selected_stocks = st.multiselect(
+            "Search Stocks",
+            options=stock_options,
+            help="Type to search for stocks",
+            placeholder="Search by stock name..."
+        )
+
+    with col2:
+        # Sector filter
+        sector_options = df_filtered['Sector Name'].unique().tolist()
+        selected_sectors = st.multiselect(
+            "Filter by Sector",
+            options=sector_options,
+            help="Select sectors to filter",
+            placeholder="Select sectors..."
+        )
+
+    with col3:
+        # Performance filter
+        performance_filter = st.selectbox(
+            "Performance Filter",
+            options=["All", "Profit", "Loss", "Top 10", "Bottom 10"],
+            help="Filter stocks by performance"
+        )
+
+    # Additional filters in an expander
+    with st.expander("Advanced Filters"):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            min_investment = st.number_input(
+                "Min Investment",
+                min_value=0,
+                value=0,
+                help="Filter by minimum investment amount"
+            )
+
+        with col2:
+            pe_range = st.slider(
+                "PE Ratio Range",
+                min_value=0,
+                max_value=int(df_filtered['PE TTM Price to Earnings'].max()),
+                value=(0, int(df_filtered['PE TTM Price to Earnings'].max())),
+                help="Filter by PE ratio range"
+            )
+
+        with col3:
+            sort_by = st.selectbox(
+                "Sort By",
+                options=[
+                    "Investment Amount",
+                    "Current Value",
+                    "Unrealized P&L %",
+                    "PE TTM Price to Earnings",
+                    "ROE Annual %"
+                ],
+                help="Choose sorting criteria"
+            )
+
+    # Apply filters only if any filter is selected
+    filtered_data = df_filtered.copy()
+    filters_applied = False
+
+    if selected_stocks:
+        filtered_data = filtered_data[filtered_data['Stock Name'].isin(selected_stocks)]
+        filters_applied = True
+
+    if selected_sectors:
+        filtered_data = filtered_data[filtered_data['Sector Name'].isin(selected_sectors)]
+        filters_applied = True
+
+    if performance_filter != "All":
+        filters_applied = True
+        if performance_filter == "Profit":
+            filtered_data = filtered_data[filtered_data['Unrealized P&L %'] > 0]
+        elif performance_filter == "Loss":
+            filtered_data = filtered_data[filtered_data['Unrealized P&L %'] < 0]
+        elif performance_filter == "Top 10":
+            filtered_data = filtered_data.nlargest(10, 'Unrealized P&L %')
+        elif performance_filter == "Bottom 10":
+            filtered_data = filtered_data.nsmallest(10, 'Unrealized P&L %')
+
+    # Apply advanced filters only if they're different from defaults
+    if min_investment > 0:
+        filtered_data = filtered_data[filtered_data['Invested Amount'] >= min_investment]
+        filters_applied = True
+
+    pe_max = int(df_filtered['PE TTM Price to Earnings'].max())
+    if pe_range != (0, pe_max):
+        filtered_data = filtered_data[filtered_data['PE TTM Price to Earnings'].between(pe_range[0], pe_range[1])]
+        filters_applied = True
+
+    # Sort data if different from default
+    if sort_by != "Investment Amount":  # Assuming Investment Amount is default
+        filtered_data = filtered_data.sort_values(sort_column_map[sort_by], ascending=False)
+        filters_applied = True
+
+    # Display summary metrics
+    if not filtered_data.empty:
+        st.subheader("Summary of Filtered Stocks" if filters_applied else "Portfolio Summary")
+        metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+
+        # Calculate metrics
+        num_stocks = len(filtered_data)
+        total_investment = filtered_data['Invested Amount'].sum()
+        total_current = filtered_data['Current Value'].sum()
+        weighted_return = ((total_current - total_investment) / total_investment) * 100
+
+        with metric_col1:
+            st.metric(
+                "Stocks Shown" if filters_applied else "Total Stocks",
+                f"{num_stocks} / {total_stocks}" if filters_applied else num_stocks,
+                help="Number of stocks currently displayed"
+            )
+
+        with metric_col2:
+            filtered_pct = (total_investment / original_investment) * 100
+            st.metric(
+                "% of Portfolio Value" if filters_applied else "Portfolio Coverage",
+                f"{filtered_pct:.1f}%",
+                help="Percentage of total portfolio value shown"
+            )
+
+        with metric_col3:
+            st.metric(
+                "Investment Amount",
+                f"₹{total_investment:,.0f}",
+                help="Total investment amount shown"
+            )
+
+        with metric_col4:
+            pl_amount = total_current - total_investment
+            st.metric(
+                "Current Value",
+                f"₹{total_current:,.0f}",
+                delta=f"₹{pl_amount:,.0f}",
+                help="Current value of shown stocks"
+            )
+
+        with metric_col5:
+            st.metric(
+                "Return",
+                f"{weighted_return:,.2f}%",
+                help="Return percentage of shown stocks"
+            )
+
+        # Display detailed table
+        st.dataframe(
+            filtered_data[[
+                'Stock Name', 'Sector Name', 'Quantity',
+                'Invested Amount', 'Current Value', 'Unrealized P&L %',
+                'PE TTM Price to Earnings', 'ROE Annual %'
+            ]].style.format({
+                'Quantity': '{:,.0f}',
+                'Invested Amount': '₹{:,.0f}',
+                'Current Value': '₹{:,.0f}',
+                'Unrealized P&L %': '{:+.2f}%',
+                'PE TTM Price to Earnings': '{:.1f}',
+                'ROE Annual %': '{:.1f}%'
+            }).background_gradient(
+                subset=['Unrealized P&L %'],
+                cmap='RdYlGn',
+                vmin=-10,
+                vmax=10
+            ),
+            height=400
+        )
+    else:
+        st.warning("No stocks match the selected filters")
+
+
 def main():
-    st.title("Enhanced Stock Portfolio Analytics Dashboard")
-    st.write("Upload your stock portfolio to get detailed insights")
+    st.set_page_config(layout="wide")  # Use wide layout for better space utilization
+
+    # Custom CSS for better styling
+    st.markdown("""
+        <style>
+        .main {
+            padding: 0rem 1rem;
+        }
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 2px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 10px 20px;
+            background-color: #f0f2f6;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #1f77b4;
+            color: white;
+        }
+        .metric-card {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.title("Portfolio Analytics Dashboard")
 
     df = load_data()
 
     if df is not None:
-        # Sidebar for filtering
-        st.sidebar.header("Filters")
-        selected_sector = st.sidebar.multiselect(
-            "Select Sectors",
-            options=df['Sector Name'].unique(),
-            default=df['Sector Name'].unique()
-        )
+        # Sidebar filters
+        with st.sidebar:
+            st.header("Filters")
+            selected_sector = st.multiselect(
+                "Select Sectors",
+                options=df['Sector Name'].unique(),
+                default=df['Sector Name'].unique()
+            )
 
-        # Filter dataframe based on selection
         df_filtered = df[df['Sector Name'].isin(selected_sector)]
+        df_filtered['Current Value'] = df_filtered['Current Price'] * df_filtered['Quantity']
 
-        # Key Metrics
-        st.header("Portfolio Overview")
-        col1, col2, col3 = st.columns(3)
+        # Portfolio Overview Section
+        with st.container():
+            st.header("Portfolio Overview")
+            col1, col2, col3, col4 = st.columns(4)
 
-        with col1:
             total_investment = df_filtered['Invested Amount'].sum()
-            st.metric("Total Investment", f"₹{total_investment:,.2f}")
+            current_value = df_filtered['Current Value'].sum()
+            total_pl = current_value - total_investment
+            total_return = ((current_value - total_investment) / total_investment) * 100
 
-        with col2:
-            current_value = df_filtered['Current Price'].sum()
-            st.metric("Current Value", f"₹{current_value:,.2f}")
+            with col1:
+                with st.container():
+                    st.metric(
+                        "Total Investment",
+                        f"₹{total_investment:,.0f}",
+                        help="Total amount invested"
+                    )
 
-        with col3:
-            total_profit_loss = df_filtered['Unrealized P&L'].sum()
-            st.metric("Total P&L", f"₹{total_profit_loss:,.2f}")
+            with col2:
+                st.metric(
+                    "Current Value",
+                    f"₹{current_value:,.0f}",
+                    delta=f"₹{total_pl:,.0f}",
+                    help="Current portfolio value"
+                )
 
-        # Add new analysis sections
-        create_sector_analysis(df_filtered)
-        create_valuation_analysis(df_filtered)
-        create_risk_analysis(df_filtered)
-        create_dividend_analysis(df_filtered)
-        create_fundamental_analysis(df_filtered)
-        create_advanced_valuation_analysis(df_filtered)
-        create_risk_reward_analysis(df_filtered)
-        create_investment_recommendations(df_filtered)
-        create_comprehensive_analysis(df_filtered)
-        create_portfolio_concentration_analysis(df_filtered)
-        create_momentum_strength_analysis(df_filtered)
-        create_quality_metrics_analysis(df_filtered)
+            with col3:
+                st.metric(
+                    "Total Return",
+                    f"{total_return:,.2f}%",
+                    help="Overall portfolio return"
+                )
 
-        # Additional Portfolio Statistics
-        st.header("Portfolio Statistics")
-        col1, col2, col3 = st.columns(3)
+            with col4:
+                st.metric(
+                    "No. of Stocks",
+                    len(df_filtered),
+                    help="Total number of stocks"
+                )
 
-        with col1:
-            st.metric("Portfolio Beta",
-                      f"{df_filtered['Beta 1Year'].mean():.2f}",
-                      help="Average Beta of the portfolio")
+        # Main Content in Tabs
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            " Portfolio Analysis",
+            "💰 Valuation Metrics",
+            "⚠️ Risk Analysis",
+            "📈 Performance Metrics",
+            "🎯 Investment Recommendations"
+        ])
 
-        with col2:
-            st.metric("Avg P/E Ratio",
-                      f"{df_filtered['PE TTM Price to Earnings'].mean():.2f}",  # Fixed column name
-                      help="Average P/E ratio of the portfolio")
+        with tab1:
+            col1, col2 = st.columns(2)
+            with col1:
+                create_sector_analysis(df_filtered)
+            with col2:
+                create_portfolio_concentration_analysis(df_filtered)
 
-        with col3:
-            st.metric("Avg Dividend Yield",
-                      f"{df_filtered['Dividend yield 1yr %'].mean():.2f}%",
-                      help="Average dividend yield of the portfolio")
+        with tab2:
+            col1, col2 = st.columns(2)
+            with col1:
+                create_valuation_analysis(df_filtered)
+            with col2:
+                create_advanced_valuation_analysis(df_filtered)
 
-        # Show raw data with filters
-        st.header("Raw Data Explorer")
-        selected_columns = st.multiselect(
-            "Select columns to view",
-            options=df_filtered.columns.tolist(),
-            default=['Stock Name', 'Sector Name', 'Invested Amount', 'Current Price', 'Unrealized P&L %']
-        )
-        st.dataframe(df_filtered[selected_columns])
+        with tab3:
+            col1, col2 = st.columns(2)
+            with col1:
+                create_risk_analysis(df_filtered)
+            with col2:
+                create_risk_reward_analysis(df_filtered)
+
+        with tab4:
+            col1, col2 = st.columns(2)
+            with col1:
+                create_fundamental_analysis(df_filtered)
+            with col2:
+                create_momentum_strength_analysis(df_filtered)
+
+            st.divider()
+            create_quality_metrics_analysis(df_filtered)
+
+        with tab5:
+            create_comprehensive_analysis(df_filtered)
+            st.divider()
+            create_investment_recommendations(df_filtered)
+
+        # Additional Analysis Section
+        create_detailed_stock_analysis(df_filtered)
 
 
 if __name__ == "__main__":
